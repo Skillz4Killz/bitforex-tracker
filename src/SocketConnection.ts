@@ -5,48 +5,56 @@ export interface SocketConnectionOptions {
 
 export type SocketEventHandler = (event: MessageEvent) => void;
 
+export let closes = 0;
+export let errors = 0;
+
 export class SocketConnection {
     private socket?: WebSocket;
-    private ready: boolean = false;
     private readonly restartMessage: string = '';
     private lastMessage: string = '';
     private listeners: Array<SocketEventHandler> = [];
     private messageQueue: Array<string> = [];
+    private readonly restart: boolean = false;
     constructor(private url: string, options?: SocketConnectionOptions) {
-        this.socket = new WebSocket(url);
-        this.addOpen();
         if(options) {
             if(options.restartMessage) this.restartMessage = options.restartMessage;
-            if(options.restart) this.addRestart();
+            if(options.restart) this.restart = options.restart;
         }
-        this.socket.addEventListener('error', (event: Event) => {
-            console.log('ERROR!!');
-            console.log(event)
-        });
+        this.initSocket();
     }
 
     private addOpen() {
-        this.socket?.addEventListener('open', (event: Event) => {
-            this.ready = true;
+        this.socket?.addEventListener('open', () => {
             this.messageQueue.map(e => this.send(e));
         });
     }
 
-    private addRestart() {
+    private initSocket() {
+        this.socket = new WebSocket(this.url);
+        let message = this.restartMessage ? this.restartMessage : this.lastMessage;
+        this.messageQueue = [];
+        this.messageQueue.push(message);
+        this.addOpen();
+        if(this.restart) {
+            this.addClose();
+            this.addError();
+        }
+        this.repopulateListeners();
+    }
+
+    private addClose() {
         this.socket?.addEventListener('close', (event: CloseEvent) => {
-            this.ready = false;
-            this.socket = new WebSocket(this.url);
-            this.addOpen();
-            this.socket.addEventListener('error', (event: Event) => {
-                console.log('ERROR!!');
-                console.log(event)
-            });
-            let message = this.restartMessage ? this.restartMessage : this.lastMessage;
-            this.socket?.addEventListener('open', (event: Event) => {
-                this.send(message);
-            });
-            this.repopulateListeners();
-            console.log('CLOSE!!!');
+            console.log('CLOSE');
+            closes++;
+            this.initSocket();
+        });
+    }
+
+    private addError() {
+        this.socket?.addEventListener('error', (event: Event) => {
+            console.log('ERROR');
+            errors++;
+            this.initSocket();
         });
     }
 
@@ -56,11 +64,12 @@ export class SocketConnection {
     }
 
     private repopulateListeners() {
+        console.log(this.listeners);
         this.listeners.forEach(e => this.socket?.addEventListener('message', e));
     }
 
     public send(msg: string) {
-        if(!this.ready) {
+        if(this.socket?.readyState !== 1) {
             this.messageQueue.push(msg);
             return;
         };
